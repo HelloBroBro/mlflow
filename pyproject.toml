@@ -37,9 +37,9 @@ dependencies = [
   "markdown<4,>=3.3",
   "matplotlib<4",
   "numpy<2",
-  "packaging<24",
+  "packaging<25",
   "pandas<3",
-  "protobuf<5,>=3.12.0",
+  "protobuf<6,>=3.12.0",
   "pyarrow<16,>=4.0.0",
   "pytz<2025",
   "pyyaml<7,>=5.1",
@@ -132,10 +132,10 @@ mlflow = [
   "pyspark/ml/log_model_allowlist.txt",
   "server/auth/basic_auth.ini",
   "server/auth/db/migrations/alembic.ini",
-  "recipes/resources/*",
-  "recipes/cards/templates/*",
-  "models/container/*",
-  "server/js/build/*",
+  "recipes/resources/**/*",
+  "recipes/cards/templates/**/*",
+  "models/container/**/*",
+  "server/js/build/**/*",
 ]
 
 [tool.setuptools.packages.find]
