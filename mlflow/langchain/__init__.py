@@ -46,6 +46,7 @@ from mlflow.langchain.utils import (
     _BASE_LOAD_KEY,
     _MODEL_LOAD_KEY,
     _RUNNABLE_LOAD_KEY,
+    _get_temp_file_with_content,
     _load_base_lcs,
     _save_base_lcs,
     _validate_and_wrap_lc_model,
@@ -57,7 +58,7 @@ from mlflow.models import Model, ModelInputExample, ModelSignature, get_model_in
 from mlflow.models.model import MLMODEL_FILE_NAME
 from mlflow.models.model_config import _set_model_config
 from mlflow.models.signature import _infer_signature_from_input_example
-from mlflow.models.utils import _save_example
+from mlflow.models.utils import _convert_llm_input_data, _save_example
 from mlflow.tracking._model_registry import DEFAULT_AWAIT_MAX_SLEEP_SECONDS
 from mlflow.tracking.artifact_utils import _download_artifact_from_uri
 from mlflow.types.schema import ColSpec, DataType, Schema
@@ -260,17 +261,19 @@ def save_model(
                 "the chain instance."
             )
 
-        if isinstance(model_config, str):
+        if isinstance(model_config, dict):
+            model_config_path = _get_temp_file_with_content(
+                "config.yml", yaml.dump(model_config), "w"
+            )
+        elif isinstance(model_config, str):
             if os.path.exists(model_config):
                 model_config_path = model_config
             else:
                 raise mlflow.MlflowException.invalid_parameter_value(
-                    f"If the provided model_config '{model_config}' is a string, it must be a "
-                    "valid yaml file path containing the configuration for the model."
+                    f"Model config path '{model_config}' provided is not a valid file path. "
+                    "Please provide a valid model configuration."
                 )
-        # TODO: deal with dicts properly as well
-
-        if not model_config:
+        elif not model_config:
             # If the model_config is not provided we fallback to getting the config path
             # from code_paths so that is backwards compatible.
             if code_paths and len(code_paths) == 1 and os.path.exists(code_paths[0]):
@@ -350,7 +353,7 @@ def save_model(
         )
         model_data_kwargs = {}
 
-    # TODO: Pass file paths for model_config when it is supported in pyfunc
+    # TODO: Pass model_config to pyfunc
     pyfunc.add_to_model(
         mlflow_model,
         loader_module="mlflow.langchain",
@@ -360,7 +363,6 @@ def save_model(
         predict_stream_fn="predict_stream",
         streamable=streamable,
         model_code_path=model_code_path,
-        model_config=None if isinstance(model_config, str) else model_config,
         **model_data_kwargs,
     )
 
@@ -601,20 +603,6 @@ def _load_model(local_model_path, flavor_conf):
     return model
 
 
-# numpy array is not json serializable, so we convert it to list
-# then send it to the model
-def _convert_ndarray_to_list(data):
-    import numpy as np
-
-    if isinstance(data, np.ndarray):
-        return data.tolist()
-    if isinstance(data, list):
-        return [_convert_ndarray_to_list(d) for d in data]
-    if isinstance(data, dict):
-        return {k: _convert_ndarray_to_list(v) for k, v in data.items()}
-    return data
-
-
 class _LangChainModelWrapper:
     def __init__(self, lc_model):
         self.lc_model = lc_model
@@ -668,18 +656,6 @@ class _LangChainModelWrapper:
         )
         return results[0] if return_first_element else results
 
-    def _convert_input_data(self, data):
-        # This handles spark_udf inputs and input_example inputs
-        if isinstance(data, pd.DataFrame):
-            # if the data only contains a single key as 0, we assume the input
-            # is either a string or list of strings
-            if list(data.columns) == [0]:
-                data = data.to_dict("list")[0]
-            else:
-                data = data.to_dict(orient="records")
-
-        return _convert_ndarray_to_list(data)
-
     def _prepare_predict_messages(self, data):
         """
         Return a tuple of (preprocessed_data, return_first_element)
@@ -687,7 +663,7 @@ class _LangChainModelWrapper:
         and `return_first_element` means if True, we should return the first element
         of inference result, otherwise we should return the whole inference result.
         """
-        data = self._convert_input_data(data)
+        data = _convert_llm_input_data(data)
 
         if not isinstance(data, list):
             # if the input data is not a list (i.e. single input),
@@ -705,7 +681,7 @@ class _LangChainModelWrapper:
         )
 
     def _prepare_predict_stream_messages(self, data):
-        data = self._convert_input_data(data)
+        data = _convert_llm_input_data(data)
 
         if isinstance(data, list):
             # `predict_stream` only accepts single input.
@@ -919,10 +895,16 @@ def load_model(model_uri, dst_path=None):
 
 
 @contextmanager
-def _config_path_context(code_path: Optional[str] = None):
-    _set_model_config(code_path)
+def _config_path_context(config_path: Optional[str] = None):
+    # Check if config_path is None and set it to "" so when loading the model
+    # the config_path is set to "" so the ModelConfig can correctly check if the
+    # config is set or not
+    if config_path is None:
+        config_path = ""
+
+    _set_model_config(config_path)
     # set rag utils global for backwards compatibility
-    _set_config_path(code_path)
+    _set_config_path(config_path)
     try:
         yield
     finally:
