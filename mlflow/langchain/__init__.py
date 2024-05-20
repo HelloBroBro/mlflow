@@ -15,6 +15,7 @@ LangChain (native) format
 import contextlib
 import functools
 import inspect
+import json
 import logging
 import os
 import warnings
@@ -48,6 +49,7 @@ from mlflow.langchain.utils import (
     register_pydantic_v1_serializer_cm,
 )
 from mlflow.models import Model, ModelInputExample, ModelSignature, get_model_info
+from mlflow.models.dependencies_schema import _clear_dependencies_schema, _get_dependencies_schema
 from mlflow.models.model import MLMODEL_FILE_NAME, MODEL_CODE_PATH, MODEL_CONFIG
 from mlflow.models.resources import _ResourceBuilder
 from mlflow.models.signature import _infer_signature_from_input_example
@@ -323,6 +325,13 @@ def save_model(
     if metadata is not None:
         mlflow_model.metadata = metadata
 
+    with _get_dependencies_schema() as dependencies_schema:
+        schema = dependencies_schema.to_dict()
+        if schema is not None:
+            if mlflow_model.metadata is None:
+                mlflow_model.metadata = {}
+            mlflow_model.metadata.update(schema)
+
     streamable = isinstance(lc_model, lc_runnables_types())
 
     if not isinstance(model_code_path, str):
@@ -595,8 +604,9 @@ def _load_model(local_model_path, flavor_conf):
 
 
 class _LangChainModelWrapper:
-    def __init__(self, lc_model):
+    def __init__(self, lc_model, model_path=None):
         self.lc_model = lc_model
+        self.model_path = model_path
 
     def predict(
         self,
@@ -630,6 +640,29 @@ class _LangChainModelWrapper:
 
         return self._predict_with_callbacks(data, params, callback_handlers=callbacks)
 
+    def _update_dependencies_schema_in_prediction_context(self, callback_handlers):
+        from mlflow.langchain.langchain_tracer import MlflowLangchainTracer
+
+        if (
+            callback_handlers
+            and (
+                tracer := next(
+                    (c for c in callback_handlers if isinstance(c, MlflowLangchainTracer)), None
+                )
+            )
+            and self.model_path
+        ):
+            model = Model.load(self.model_path)
+            context = tracer._prediction_context
+            if model.metadata and context:
+                dependencies_schema = model.metadata.get("dependencies_schemas", {})
+                context.update(
+                    dependencies_schema={
+                        dependency: json.dumps(schema)
+                        for dependency, schema in dependencies_schema.items()
+                    }
+                )
+
     @experimental
     def _predict_with_callbacks(
         self,
@@ -651,6 +684,7 @@ class _LangChainModelWrapper:
         """
         from mlflow.langchain.api_request_parallel_processor import process_api_requests
 
+        self._update_dependencies_schema_in_prediction_context(callback_handlers)
         messages, return_first_element = self._prepare_predict_messages(data)
         results = process_api_requests(
             lc_model=self.lc_model,
@@ -743,6 +777,7 @@ class _LangChainModelWrapper:
             process_stream_request,
         )
 
+        self._update_dependencies_schema_in_prediction_context(callback_handlers)
         data = self._prepare_predict_stream_messages(data)
         return process_stream_request(
             lc_model=self.lc_model,
@@ -823,7 +858,7 @@ def _load_pyfunc(path: str, model_config: Optional[Dict[str, Any]] = None):
         path: Local filesystem path to the MLflow Model with the ``langchain`` flavor.
     """
     wrapper_cls = _TestLangChainWrapper if _MLFLOW_TESTING.get() else _LangChainModelWrapper
-    return wrapper_cls(_load_model_from_local_fs(path))
+    return wrapper_cls(_load_model_from_local_fs(path), path)
 
 
 def _load_model_from_local_fs(local_model_path):
@@ -843,7 +878,14 @@ def _load_model_from_local_fs(local_model_path):
             os.path.basename(flavor_code_path),
         )
 
-        return _load_model_code_path(code_path, model_config)
+        try:
+            model = _load_model_code_path(code_path, model_config)
+        finally:
+            # We would like to clean up the dependencies schema which is set to global
+            # after loading the mode to avoid the schema being used in the next model loading
+            _clear_dependencies_schema()
+
+        return model
     else:
         _add_code_from_conf_to_system_path(local_model_path, flavor_conf)
         with patch_langchain_type_to_cls_dict():
