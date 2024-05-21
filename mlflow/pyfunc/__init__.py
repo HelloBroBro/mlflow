@@ -385,6 +385,7 @@ import collections
 import functools
 import importlib
 import inspect
+import json
 import logging
 import os
 import signal
@@ -412,7 +413,10 @@ from mlflow.environment_variables import (
 )
 from mlflow.exceptions import MlflowException
 from mlflow.models import Model, ModelInputExample, ModelSignature
-from mlflow.models.dependencies_schema import _clear_dependencies_schema, _get_dependencies_schema
+from mlflow.models.dependencies_schemas import (
+    _clear_dependencies_schemas,
+    _get_dependencies_schemas,
+)
 from mlflow.models.flavor_backend_registry import get_flavor_backend
 from mlflow.models.model import (
     _DATABRICKS_FS_LOADER_MODULE,
@@ -448,6 +452,7 @@ from mlflow.protos.databricks_uc_registry_messages_pb2 import (
     LineageHeaderInfo,
     Notebook,
 )
+from mlflow.pyfunc.context import get_prediction_context
 from mlflow.pyfunc.model import (
     ChatModel,
     PythonModel,
@@ -705,6 +710,16 @@ class PyFuncModel:
             )
         return data, params
 
+    def _update_dependencies_schemas_in_prediction_context(self):
+        if self._model_meta and self._model_meta.metadata and (context := get_prediction_context()):
+            dependencies_schemas = self._model_meta.metadata.get("dependencies_schemas", {})
+            context.update(
+                dependencies_schemas={
+                    dependency: json.dumps(schema)
+                    for dependency, schema in dependencies_schemas.items()
+                }
+            )
+
     def predict(self, data: PyFuncInput, params: Optional[Dict[str, Any]] = None) -> PyFuncOutput:
         """
         Generates model predictions.
@@ -733,7 +748,7 @@ class PyFuncModel:
         Returns:
             Model predictions as one of pandas.DataFrame, pandas.Series, numpy.ndarray or list.
         """
-
+        self._update_dependencies_schemas_in_prediction_context()
         data, params = self._validate_prediction_input(data, params)
         if inspect.signature(self._predict_fn).parameters.get("params"):
             return self._predict_fn(data, params=params)
@@ -764,6 +779,7 @@ class PyFuncModel:
         if self._predict_stream_fn is None:
             raise MlflowException("This model does not support predict_stream method.")
 
+        self._update_dependencies_schemas_in_prediction_context()
         data, params = self._validate_prediction_input(data, params)
         data = _convert_llm_input_data(data)
         if isinstance(data, list):
@@ -991,7 +1007,7 @@ def load_model(
     finally:
         # clean up the dependencies schema which is set to global state after loading the model.
         # This avoids the schema being used by other models loaded in the same process.
-        _clear_dependencies_schema()
+        _clear_dependencies_schemas()
     predict_fn = conf.get("predict_fn", "predict")
     streamable = conf.get("streamable", False)
     predict_stream_fn = conf.get("predict_stream_fn", "predict_stream") if streamable else None
@@ -2434,8 +2450,8 @@ def save_model(
     if metadata is not None:
         mlflow_model.metadata = metadata
 
-    with _get_dependencies_schema() as dependencies_schema:
-        schema = dependencies_schema.to_dict()
+    with _get_dependencies_schemas() as dependencies_schemas:
+        schema = dependencies_schemas.to_dict()
         if schema is not None:
             if mlflow_model.metadata is None:
                 mlflow_model.metadata = {}

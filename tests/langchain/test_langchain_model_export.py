@@ -58,7 +58,7 @@ from mlflow.langchain.utils import (
     IS_PICKLE_SERIALIZATION_RESTRICTED,
 )
 from mlflow.models import Model
-from mlflow.models.dependencies_schema import DependenciesSchemasType
+from mlflow.models.dependencies_schemas import DependenciesSchemasType
 from mlflow.models.resources import DatabricksServingEndpoint, DatabricksVectorSearchIndex, Resource
 from mlflow.models.signature import ModelSignature, Schema, infer_signature
 from mlflow.pyfunc.context import Context
@@ -2360,11 +2360,11 @@ def test_save_load_chain_as_code(chain_model_signature):
     artifact_path = "model_path"
     with mlflow.start_run() as run:
         model_info = mlflow.langchain.log_model(
-            lc_model="tests/langchain/chain.py",
+            lc_model="tests/langchain/sample_code/chain.py",
             artifact_path=artifact_path,
             signature=chain_model_signature,
             input_example=input_example,
-            model_config="tests/langchain/config.yml",
+            model_config="tests/langchain/sample_code/config.yml",
         )
 
     assert mlflow.models.model_config.__mlflow_model_config__ is None
@@ -2443,7 +2443,7 @@ def test_save_load_chain_as_code_model_config_dict(chain_model_signature):
     }
     with mlflow.start_run():
         model_info = mlflow.langchain.log_model(
-            lc_model="tests/langchain/chain.py",
+            lc_model="tests/langchain/sample_code/chain.py",
             artifact_path="model_path",
             signature=chain_model_signature,
             input_example=input_example,
@@ -2481,7 +2481,7 @@ def test_save_load_chain_as_code_with_different_names(tmp_path, chain_model_sign
     }
 
     # Read the contents of the original chain file
-    with open("tests/langchain/chain.py") as chain_file:
+    with open("tests/langchain/sample_code/chain.py") as chain_file:
         chain_file_content = chain_file.read()
 
     temp_file = tmp_path / "model.py"
@@ -2493,7 +2493,7 @@ def test_save_load_chain_as_code_with_different_names(tmp_path, chain_model_sign
             artifact_path="model_path",
             signature=chain_model_signature,
             input_example=input_example,
-            model_config="tests/langchain/config.yml",
+            model_config="tests/langchain/sample_code/config.yml",
         )
 
     loaded_model = mlflow.langchain.load_model(model_info.model_uri)
@@ -2513,7 +2513,7 @@ def test_save_load_chain_as_code_with_different_names(tmp_path, chain_model_sign
     Version(langchain.__version__) < Version("0.0.311"), reason="feature not existing"
 )
 def test_save_load_chain_as_code_multiple_times(tmp_path, chain_model_signature):
-    config_path = "tests/langchain/config.yml"
+    config_path = "tests/langchain/sample_code/config.yml"
     input_example = {
         "messages": [
             {
@@ -2524,7 +2524,7 @@ def test_save_load_chain_as_code_multiple_times(tmp_path, chain_model_signature)
     }
     with mlflow.start_run():
         model_info = mlflow.langchain.log_model(
-            lc_model="tests/langchain/chain.py",
+            lc_model="tests/langchain/sample_code/chain.py",
             artifact_path="model_path",
             signature=chain_model_signature,
             input_example=input_example,
@@ -2547,7 +2547,7 @@ def test_save_load_chain_as_code_multiple_times(tmp_path, chain_model_signature)
 
     with mlflow.start_run():
         model_info = mlflow.langchain.log_model(
-            lc_model="tests/langchain/chain.py",
+            lc_model="tests/langchain/sample_code/chain.py",
             artifact_path="model_path",
             signature=chain_model_signature,
             input_example=input_example,
@@ -2571,7 +2571,7 @@ def test_save_load_chain_errors(chain_model_signature):
         ]
     }
     with mlflow.start_run():
-        incorrect_path = "tests/langchain1/chain.py"
+        incorrect_path = "tests/langchain1/sample_code/chain.py"
         with pytest.raises(
             MlflowException,
             match=f"If the provided model '{incorrect_path}' is a string, it must be a valid "
@@ -2602,7 +2602,7 @@ def test_save_load_chain_as_code_optional_code_path(chain_model_signature):
     artifact_path = "new_model_path"
     with mlflow.start_run() as run:
         model_info = mlflow.langchain.log_model(
-            lc_model="tests/langchain/no_config/chain.py",
+            lc_model="tests/langchain/sample_code/no_config/chain.py",
             artifact_path=artifact_path,
             signature=chain_model_signature,
             input_example=input_example,
@@ -2921,7 +2921,7 @@ def test_langchain_model_inject_callback_in_model_serving(
     clear_trace_singleton, monkeypatch, model_path
 ):
     # Emulate the model serving environment
-    monkeypatch.setenv("IS_IN_DATABRICKS_MODEL_SERVING_ENV", "true")
+    monkeypatch.setenv("IS_IN_DB_MODEL_SERVING_ENV", "true")
 
     model = create_openai_llmchain()
     mlflow.langchain.save_model(model, model_path)
@@ -2945,7 +2945,7 @@ def test_langchain_model_not_inject_callback_when_disabled(
     clear_trace_singleton, monkeypatch, model_path
 ):
     # Emulate the model serving environment
-    monkeypatch.setenv("IS_IN_DATABRICKS_MODEL_SERVING_ENV", "true")
+    monkeypatch.setenv("IS_IN_DB_MODEL_SERVING_ENV", "true")
 
     # Disable tracing
     monkeypatch.setenv("MLFLOW_ENABLE_TRACE_IN_SERVING", "false")
@@ -2971,7 +2971,7 @@ def test_save_model_as_code_correct_streamable(chain_model_signature):
     artifact_path = "model_path"
     with mlflow.start_run() as run:
         model_info = mlflow.langchain.log_model(
-            lc_model="tests/langchain/no_config/chain.py",
+            lc_model="tests/langchain/sample_code/no_config/chain.py",
             artifact_path=artifact_path,
             signature=chain_model_signature,
             input_example=input_example,
