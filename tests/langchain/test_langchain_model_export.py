@@ -3099,3 +3099,55 @@ def test_langchain_bindings_save_load_with_config_and_types(fake_chat_model):
     assert PredictionsResponse.from_json(response.content.decode("utf-8")) == {
         "predictions": "Databricks"
     }
+
+
+@pytest.mark.skipif(
+    Version(langchain.__version__) < Version("0.0.311"), reason="feature not existing"
+)
+def test_langchain_2_12_model_loads():
+    TEST_DIR = "tests"
+    TEST_MLFLOW_12_2_LANGCHAIN_MODEL = os.path.join(
+        TEST_DIR, "resources", "example_mlflow_2.12_langchain_model"
+    )
+
+    model = mlflow.langchain.load_model(TEST_MLFLOW_12_2_LANGCHAIN_MODEL)
+    pyfunc_model = mlflow.pyfunc.load_model(TEST_MLFLOW_12_2_LANGCHAIN_MODEL)
+    assert (
+        model.invoke({"messages": [{"role": "user", "content": "Who owns MLflow?"}]})
+        == "Databricks"
+    )
+    output = pyfunc_model.predict({"messages": [{"role": "user", "content": "Who owns MLflow?"}]})
+    assert output[0]["choices"][0]["message"]["content"] == "Databricks"
+
+
+@pytest.mark.skipif(
+    Version(langchain.__version__) < Version("0.0.311"), reason="feature not existing"
+)
+def test_load_chain_with_model_config_overrides_saved_config(chain_model_signature):
+    input_example = {
+        "messages": [
+            {
+                "role": "user",
+                "content": "What is a good name for a company that makes MLflow?",
+            }
+        ]
+    }
+    artifact_path = "model_path"
+    with mlflow.start_run():
+        model_info = mlflow.langchain.log_model(
+            lc_model="tests/langchain/sample_code/chain.py",
+            artifact_path=artifact_path,
+            signature=chain_model_signature,
+            input_example=input_example,
+            model_config="tests/langchain/sample_code/config.yml",
+        )
+
+    with mock.patch("mlflow.langchain._load_model_code_path") as load_model_code_path_mock:
+        mlflow.pyfunc.load_model(model_info.model_uri, model_config={"embedding_size": 2})
+        args, kwargs = load_model_code_path_mock.call_args
+        assert args[1] == {
+            "embedding_size": 2,
+            "llm_prompt_template": "Answer the following question based on the "
+            "context: {context}\nQuestion: {question}",
+            "response": "Databricks",
+        }

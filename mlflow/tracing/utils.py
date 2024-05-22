@@ -131,7 +131,7 @@ def deduplicate_span_names_in_place(spans: List[LiveSpan]):
         ["red", "red", "blue"] -> ["red_1", "red_2", "blue"]
 
     Args:
-        trace_data: The trace data object to deduplicate span names.
+        spans: A list of spans to deduplicate.
     """
     span_name_counter = Counter(span.name for span in spans)
     # Apply renaming only for duplicated spans
@@ -178,9 +178,10 @@ def maybe_get_request_id(is_evaluate=False) -> Optional[str]:
     if not context or (is_evaluate and not context.is_evaluate):
         return None
 
-    if not context.request_id:
+    if not context.request_id and is_evaluate:
         raise MlflowException(
-            f"Missing request_id for context {context}.",
+            f"Missing request_id for context {context}. "
+            "request_id can't be None when is_evaluate=True.",
             error_code=BAD_REQUEST,
         )
 
