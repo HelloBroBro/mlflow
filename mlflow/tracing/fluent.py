@@ -5,13 +5,14 @@ import functools
 import importlib
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Generator, List, Optional
 
 from cachetools import TTLCache
 from opentelemetry import trace as trace_api
 
 from mlflow import MlflowClient
-from mlflow.entities import LiveSpan, NoOpSpan, SpanType, Trace
+from mlflow.entities import NoOpSpan, SpanType, Trace
+from mlflow.entities.span import LiveSpan, create_mlflow_span
 from mlflow.environment_variables import (
     MLFLOW_TRACE_BUFFER_MAX_SIZE,
     MLFLOW_TRACE_BUFFER_TTL_SECONDS,
@@ -148,7 +149,7 @@ def start_span(
     name: str = "span",
     span_type: Optional[str] = SpanType.UNKNOWN,
     attributes: Optional[Dict[str, Any]] = None,
-):
+) -> Generator[LiveSpan, None, None]:
     """
     Context manager to create a new span and start it as the current span in the context.
 
@@ -214,9 +215,9 @@ def start_span(
     try:
         otel_span = provider.start_span_in_context(name)
 
-        # Create a new MlflowSpanWrapper and register it to the in-memory trace manager
+        # Create a new MLflow span and register it to the in-memory trace manager
         request_id = get_otel_attribute(otel_span, SpanAttributeKey.REQUEST_ID)
-        mlflow_span = LiveSpan(otel_span, request_id=request_id, span_type=span_type)
+        mlflow_span = create_mlflow_span(otel_span, request_id, span_type)
         mlflow_span.set_attributes(attributes or {})
         InMemoryTraceManager.get_instance().register_span(mlflow_span)
 
@@ -232,7 +233,7 @@ def start_span(
 
     try:
         # Setting end_on_exit = False to suppress the default span
-        # export and instead invoke MlflowSpanWrapper.end()
+        # export and instead invoke MLflow span's end() method.
         with trace_api.use_span(mlflow_span._span, end_on_exit=False):
             yield mlflow_span
     finally:
@@ -247,9 +248,26 @@ def start_span(
 
 
 @experimental
-def get_trace(request_id: str) -> Trace:
+def get_trace(request_id: str) -> Optional[Trace]:
     """
-    Get a trace by the given request ID.
+    Get a trace by the given request ID if it exists.
+
+    Args:
+        request_id: The request ID of the trace.
+
+
+    .. code-block:: python
+        :test:
+
+        import mlflow
+
+
+        with mlflow.start_span(name="span") as span:
+            span.set_attribute("key", "value")
+
+        trace = mlflow.get_trace(span.request_id)
+        print(trace)
+
 
     Returns:
         A :py:class:`mlflow.entities.Trace` objects with the given request ID.
@@ -306,6 +324,7 @@ def search_traces(
 
 
     .. code-block:: python
+        :test:
         :caption: Search traces with extract_fields and non-dictionary span inputs and outputs
 
         import mlflow
@@ -365,7 +384,7 @@ def search_traces(
 
 
 @experimental
-def get_current_active_span():
+def get_current_active_span() -> Optional[LiveSpan]:
     """
     Get the current active span in the global context.
 
@@ -374,6 +393,22 @@ def get_current_active_span():
         This only works when the span is created with fluent APIs like `@mlflow.trace` or
         `with mlflow.start_span`. If a span is created with MlflowClient APIs, it won't be
         attached to the global context so this function will not return it.
+
+
+    .. code-block:: python
+        :test:
+
+        import mlflow
+
+
+        @mlflow.trace
+        def f():
+            span = mlflow.get_current_active_span()
+            span.set_attribute("key", "value")
+            return 0
+
+
+        f()
 
     Returns:
         The current active span if exists, otherwise None.
