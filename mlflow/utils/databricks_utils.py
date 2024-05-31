@@ -187,6 +187,14 @@ def is_in_databricks_model_serving_environment():
     return val.lower() == "true"
 
 
+def is_mlflow_tracing_enabled_in_model_serving() -> bool:
+    """
+    This environment variable guards tracing behaviors for models in databricks
+    model serving. Tracing in serving is only enabled when this env var is true.
+    """
+    return os.environ.get("ENABLE_MLFLOW_TRACING", "false").lower() == "true"
+
+
 # this should only be the case when we are in model serving environment
 # and OAuth token file exists in specified path
 def should_fetch_model_serving_environment_oauth():
@@ -949,7 +957,7 @@ if is_in_databricks_runtime():
 
 def get_databricks_nfs_temp_dir():
     entry_point = _get_dbutils().entry_point
-    if getpass.getuser() == "ROOT":
+    if getpass.getuser().lower() == "root":
         return entry_point.getReplNFSTempDir()
     else:
         try:
@@ -964,7 +972,7 @@ def get_databricks_nfs_temp_dir():
 
 def get_databricks_local_temp_dir():
     entry_point = _get_dbutils().entry_point
-    if getpass.getuser() == "ROOT":
+    if getpass.getuser().lower() == "root":
         return entry_point.getReplLocalTempDir()
     else:
         try:
