@@ -2930,17 +2930,6 @@ def test_search_traces_filter(generate_trace_infos):
     # filter by name
     _validate_search_traces(store, [exp_id], "name = 'trace_0'", trace_infos[:1])
     _validate_search_traces(store, [exp_id], "name != 'trace_0'", trace_infos[1:][::-1])
-    _validate_search_traces(
-        store, [exp_id], "name IN ('trace_0', 'trace_1')", trace_infos[:2][::-1]
-    )
-    _validate_search_traces(
-        store, [exp_id], "name NOT IN ('trace_0', 'trace_1')", trace_infos[2:][::-1]
-    )
-    _validate_search_traces(store, [exp_id], "name LIKE 'trace_%'", trace_infos[::-1])
-    _validate_search_traces(store, [exp_id], "name ILIKE 'Trace_%'", trace_infos[::-1])
-    _validate_search_traces(
-        store, [exp_id], "name ILIKE 'Trace_%' AND name LIKE '%0'", trace_infos[:1]
-    )
 
     # filter by status
     _validate_search_traces(store, [exp_id], "status = 'IN_PROGRESS'", trace_infos[::-1])
@@ -2960,8 +2949,6 @@ def test_search_traces_filter(generate_trace_infos):
     _validate_search_traces(
         store, [exp_id], "status NOT IN ('IN_PROGRESS', 'OK')", trace_infos[2:5][::-1]
     )
-    _validate_search_traces(store, [exp_id], "status LIKE 'O%'", trace_infos[:2][::-1])
-    _validate_search_traces(store, [exp_id], "status ILIKE 'ok'", trace_infos[:2][::-1])
 
     # filter by status w/ attributes. or trace. prefix
     _validate_search_traces(
@@ -2997,8 +2984,6 @@ def test_search_traces_filter(generate_trace_infos):
     _validate_search_traces(
         store, [exp_id], f"request_id NOT IN ('{request_ids[0]}')", trace_infos[1:][::-1]
     )
-    _validate_search_traces(store, [exp_id], "request_id LIKE '%'", trace_infos[::-1])
-    _validate_search_traces(store, [exp_id], "request_id ILIKE '%'", trace_infos[::-1])
 
     # filter by execution_time
     for execution_time_key in ["execution_time", "execution_time_ms"]:
@@ -3031,10 +3016,6 @@ def test_search_traces_filter(generate_trace_infos):
         )
     _validate_search_traces(store, [exp_id], "run_id = 'run_5'", [trace_infos[5]])
     _validate_search_traces(store, [exp_id], "run_id != 'run_5'", trace_infos[6:][::-1])
-    _validate_search_traces(store, [exp_id], "run_id IN ('run_5')", [trace_infos[5]])
-    _validate_search_traces(store, [exp_id], "run_id NOT IN ('run_5')", trace_infos[6:][::-1])
-    _validate_search_traces(store, [exp_id], "run_id LIKE 'run_%'", trace_infos[5:][::-1])
-    _validate_search_traces(store, [exp_id], "run_id ILIKE 'RUN_5'", [trace_infos[5]])
 
     # filter by tag
     for tag_identifier in ["tag", "tags"]:
@@ -3044,29 +3025,78 @@ def test_search_traces_filter(generate_trace_infos):
         _validate_search_traces(
             store, [exp_id], f"{tag_identifier}.test_tag != 'tag_0'", trace_infos[1:][::-1]
         )
-        _validate_search_traces(
-            store, [exp_id], f"{tag_identifier}.test_tag IN ('tag_0')", [trace_infos[0]]
-        )
-        _validate_search_traces(
-            store, [exp_id], f"{tag_identifier}.test_tag NOT IN ('tag_0')", trace_infos[1:][::-1]
-        )
-        _validate_search_traces(
-            store, [exp_id], f"{tag_identifier}.test_tag LIKE 'tag_%'", trace_infos[::-1]
-        )
-        _validate_search_traces(
-            store, [exp_id], f"{tag_identifier}.test_tag ILIKE 'TAG_%'", trace_infos[::-1]
-        )
         _validate_search_traces(store, [exp_id], f"{tag_identifier}.test_tag = '123'", [])
 
     # multiple filter conditions
     _validate_search_traces(
-        store, [exp_id], "name LIKE 'trace_%' AND timestamp <= 10", trace_infos[:2][::-1]
+        store, [exp_id], "status = 'OK' AND timestamp <= 10", trace_infos[:2][::-1]
+    )
+
+
+def test_search_traces_filter_request_metadata(store):
+    exp_id = store.create_experiment("test")
+    timestamp_ms_1 = get_current_time_millis()
+    trace_info_1 = store.start_trace(
+        exp_id,
+        timestamp_ms_1,
+        {
+            TraceMetadataKey.INPUTS: "inputs1",
+            TraceMetadataKey.OUTPUTS: "outputs1",
+        },
+        {},
+    )
+    time.sleep(0.001)  # ensure unique timestamps
+    timestamp_ms_2 = get_current_time_millis()
+    trace_info_2 = store.start_trace(
+        exp_id,
+        timestamp_ms_2,
+        {
+            TraceMetadataKey.INPUTS: "inputs2",
+            TraceMetadataKey.OUTPUTS: "outputs2",
+        },
+        {},
+    )
+
+    _validate_search_traces(
+        store,
+        [exp_id],
+        f"request_metadata.{TraceMetadataKey.INPUTS} = 'inputs1'",
+        [trace_info_1],
     )
     _validate_search_traces(
         store,
         [exp_id],
-        "name LIKE 'trace_%' AND status IN ('ERROR') AND timestamp <= 20",
-        [trace_infos[2]],
+        f"request_metadata.{TraceMetadataKey.OUTPUTS} = 'outputs1'",
+        [trace_info_1],
+    )
+    # not equal
+    _validate_search_traces(
+        store,
+        [exp_id],
+        f"request_metadata.{TraceMetadataKey.INPUTS} != 'inputs1'",
+        [trace_info_2],
+    )
+    _validate_search_traces(
+        store,
+        [exp_id],
+        f"request_metadata.{TraceMetadataKey.INPUTS} != 'test'",
+        [trace_info_2, trace_info_1],
+    )
+
+    # backtick
+    _validate_search_traces(
+        store,
+        [exp_id],
+        f"request_metadata.`{TraceMetadataKey.INPUTS}` = 'inputs1'",
+        [trace_info_1],
+    )
+
+    # alias
+    _validate_search_traces(
+        store,
+        [exp_id],
+        f"metadata.{TraceMetadataKey.INPUTS} = 'inputs1'",
+        [trace_info_1],
     )
 
 
@@ -3078,8 +3108,14 @@ def test_search_traces_filter(generate_trace_infos):
         ("foo.bar = 'baz'", r"Invalid entity type 'foo'"),
         ("invalid = 'foo'", r"Invalid attribute key 'invalid'"),
         ("trace.tags.foo = 'bar'", r"Invalid attribute key 'tags\.foo'"),
-        # TODO: This should raise
-        # ("trace.status < 'OK'", r"Invalid comparator '<'"),
+        ("trace.status < 'OK'", r"Invalid comparator '<'"),
+        ("name IN ('foo', 'bar')", r"Invalid comparator 'IN'"),
+        # We don't support LIKE/ILIKE operators for trace search because it may
+        # cause performance issues with large attributes and tags.
+        ("name LIKE 'trace_%'", r"Invalid comparator 'LIKE'"),
+        ("run_id ILIKE 'run_%'", r"Invalid comparator 'ILIKE'"),
+        ("tag.test_tag LIKE 'tag_%'", r"Invalid comparator 'LIKE'"),
+        ("tags.test_tag ILIKE 'tag_%'", r"Invalid comparator 'ILIKE'"),
     ],
 )
 def test_search_traces_invalid_filter(generate_trace_infos, filter_string, error):
