@@ -1,12 +1,7 @@
 # This module is copied from legacy databricks CLI python library
-# module `databricks_cli.configure.provider`,
-# but with some modification to make `EnvironmentVariableConfigProvider` supporting
-# 'DATABRICKS_CLIENT_ID' and 'DATABRICKS_CLIENT_SECRET' environmental variables.
-#
-# This is the original legacy databricks CLI python library provider module code:
+# module `databricks_cli.configure.provider`, see
 # https://github.com/databricks/databricks-cli/blob/0.18.0/databricks_cli/configure/provider.py
-#
-# The latest Databricks Runtime does not contain legacy databricks CLI
+# because the latest Databricks Runtime does not contain legacy databricks CLI
 # but MLflow still depends on it.
 
 import logging
@@ -29,8 +24,6 @@ REFRESH_TOKEN = "refresh_token"
 INSECURE = "insecure"
 JOBS_API_VERSION = "jobs-api-version"
 DEFAULT_SECTION = "DEFAULT"
-CLIENT_ID = "client_id"
-CLIENT_SECRET = "client_secret"
 
 # User-provided override for the DatabricksConfigProvider
 _config_provider = None
@@ -272,19 +265,8 @@ class EnvironmentVariableConfigProvider(DatabricksConfigProvider):
         refresh_token = os.environ.get("DATABRICKS_REFRESH_TOKEN")
         insecure = os.environ.get("DATABRICKS_INSECURE")
         jobs_api_version = os.environ.get("DATABRICKS_JOBS_API_VERSION")
-        client_id = os.environ.get("DATABRICKS_CLIENT_ID")
-        client_secret = os.environ.get("DATABRICKS_CLIENT_SECRET")
-
         config = DatabricksConfig(
-            host,
-            username,
-            password,
-            token,
-            refresh_token,
-            insecure,
-            jobs_api_version,
-            client_id=client_id,
-            client_secret=client_secret,
+            host, username, password, token, refresh_token, insecure, jobs_api_version
         )
         if config.is_valid:
             return config
@@ -294,8 +276,8 @@ class EnvironmentVariableConfigProvider(DatabricksConfigProvider):
 class ProfileConfigProvider(DatabricksConfigProvider):
     """Loads from the databrickscfg file."""
 
-    def __init__(self, profile=None):
-        self.profile = profile or DEFAULT_SECTION
+    def __init__(self, profile=DEFAULT_SECTION):
+        self.profile = profile
 
     def get_config(self):
         raw_config = _fetch_from_fs()
@@ -306,18 +288,8 @@ class ProfileConfigProvider(DatabricksConfigProvider):
         refresh_token = _get_option_if_exists(raw_config, self.profile, REFRESH_TOKEN)
         insecure = _get_option_if_exists(raw_config, self.profile, INSECURE)
         jobs_api_version = _get_option_if_exists(raw_config, self.profile, JOBS_API_VERSION)
-        client_id = _get_option_if_exists(raw_config, self.profile, CLIENT_ID)
-        client_secret = _get_option_if_exists(raw_config, self.profile, CLIENT_SECRET)
         config = DatabricksConfig(
-            host,
-            username,
-            password,
-            token,
-            refresh_token,
-            insecure,
-            jobs_api_version,
-            client_id=client_id,
-            client_secret=client_secret,
+            host, username, password, token, refresh_token, insecure, jobs_api_version
         )
         if config.is_valid:
             return config
@@ -350,9 +322,15 @@ class DatabricksModelServingConfigProvider(DatabricksConfigProvider):
         # at any point in time but refresh at higher rate of every 5 min here to be safe
         # and conform with refresh logic for Brickstore tables.
         OAUTH_CACHE_REFRESH_DURATION_SEC = 5 * 60
-        OAUTH_CACHE_ENV_VAR = "DATABRICKS_DEPENDENCY_OAUTH_CACHE"
-        OAUTH_CACHE_EXPIRATION_ENV_VAR = "DATABRICKS_DEPENDENCY_OAUTH_CACHE_EXIRY_TS"
+        OAUTH_CACHE_ENV_VAR = "DB_DEPENDENCY_OAUTH_CACHE"
+        OAUTH_CACHE_EXPIRATION_ENV_VAR = "DB_DEPENDENCY_OAUTH_CACHE_EXPIRY_TS"
         MODEL_SERVING_HOST_ENV_VAR = "DATABRICKS_MODEL_SERVING_HOST_URL"
+        DB_MODEL_SERVING_HOST_ENV_VAR = "DB_MODEL_SERVING_HOST_URL"
+
+        # read from DB_MODEL_SERVING_HOST_ENV_VAR if available otherwise MODEL_SERVING_HOST_ENV_VAR
+        host = os.environ.get(DB_MODEL_SERVING_HOST_ENV_VAR) or os.environ.get(
+            MODEL_SERVING_HOST_ENV_VAR
+        )
 
         # check if dependency is cached in env var before reading from file
         oauth_token = ""
@@ -370,7 +348,7 @@ class DatabricksModelServingConfigProvider(DatabricksConfigProvider):
             )
 
         return DatabricksConfig(
-            host=os.environ[MODEL_SERVING_HOST_ENV_VAR],
+            host=host,
             token=oauth_token,
             username=None,
             password=None,
@@ -390,8 +368,6 @@ class DatabricksConfig:
         refresh_token=None,
         insecure=None,
         jobs_api_version=None,
-        client_id=None,
-        client_secret=None,
     ):
         self.host = host
         self.username = username
@@ -400,8 +376,6 @@ class DatabricksConfig:
         self.refresh_token = refresh_token
         self.insecure = insecure
         self.jobs_api_version = jobs_api_version
-        self.client_id = client_id
-        self.client_secret = client_secret
 
     @classmethod
     def from_token(cls, host, token, refresh_token=None, insecure=None, jobs_api_version=None):
@@ -448,15 +422,5 @@ class DatabricksConfig:
         return self.host is not None and self.username is not None and self.password is not None
 
     @property
-    def is_valid_with_client_id_secret(self):
-        return (
-            self.host is not None and self.client_id is not None and self.client_secret is not None
-        )
-
-    @property
     def is_valid(self):
-        return (
-            self.is_valid_with_token
-            or self.is_valid_with_password
-            or self.is_valid_with_client_id_secret
-        )
+        return self.is_valid_with_token or self.is_valid_with_password
