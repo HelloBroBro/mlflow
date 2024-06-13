@@ -31,6 +31,7 @@ from mlflow.tracking.client import MlflowClient
 from mlflow.tracking.context.registry import resolve_tags
 from mlflow.tracking.default_experiment import DEFAULT_EXPERIMENT_ID
 from mlflow.tracking.fluent import _get_experiment_id
+from mlflow.utils.mlflow_tags import TRACE_RESOLVE_TAGS_ALLOWLIST
 
 _logger = logging.getLogger(__name__)
 
@@ -78,7 +79,7 @@ class MlflowSpanProcessor(SimpleSpanProcessor):
 
     def _start_trace(self, span: OTelSpan) -> TraceInfo:
         experiment_id = get_otel_attribute(span, SpanAttributeKey.EXPERIMENT_ID)
-        metadata = {}
+        metadata = {TRACE_SCHEMA_VERSION_KEY: str(TRACE_SCHEMA_VERSION)}
         # If the span is started within an active MLflow run, we should record it as a trace tag
         if run := mlflow.active_run():
             metadata[TraceMetadataKey.SOURCE_RUN] = run.info.run_id
@@ -102,8 +103,12 @@ class MlflowSpanProcessor(SimpleSpanProcessor):
             )
             self._issued_default_exp_warning = True
 
-        tags = resolve_tags()
-        tags.update({TRACE_SCHEMA_VERSION_KEY: str(TRACE_SCHEMA_VERSION)})
+        unfiltered_tags = resolve_tags()
+        tags = {
+            key: value
+            for key, value in unfiltered_tags.items()
+            if key in TRACE_RESOLVE_TAGS_ALLOWLIST
+        }
 
         # If the trace is created in the context of MLflow model evaluation, we extract the request
         # ID from the prediction context. Otherwise, we create a new trace info by calling the
