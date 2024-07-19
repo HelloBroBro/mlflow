@@ -1,3 +1,5 @@
+import random
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, List, Optional
@@ -508,6 +510,8 @@ def test_tracer_thread_safe():
         tracer.on_chain_start(
             {}, {"input": "test input"}, run_id=chain_run_id, name=f"chain_{worker_id}"
         )
+        # wait for a random time (0.5 ~ 1s) to simulate real-world scenario
+        time.sleep(random.random() / 2 + 0.5)
         tracer.on_chain_end({"output": "test output"}, run_id=chain_run_id)
 
     with ThreadPoolExecutor(max_workers=10) as executor:
@@ -590,3 +594,42 @@ def test_tracer_noop_when_tracing_disabled(monkeypatch):
     assert get_traces() == []
     # No warning should be issued
     mock_logger.warning.assert_not_called()
+
+
+@pytest.mark.skipif(
+    Version(langchain.__version__) < Version("0.1.0"),
+    reason="ChatPromptTemplate expecting dict input",
+)
+def test_tracer_nested_trace():
+    # Validate if the callback works properly if it is used in a context
+    # of an active span created by MLflow fluent API.
+    llm = OpenAI(temperature=0.9)
+    prompt = PromptTemplate(
+        input_variables=["product"],
+        template="What is a good name for a company that makes {product}?",
+    )
+    chain = prompt | llm | StrOutputParser()
+
+    @mlflow.trace(name="parent", span_type="SPECIAL")
+    def run(message):
+        with _mock_request(return_value=_mock_chat_completion_response()):
+            return chain.invoke(message, config={"callbacks": [MlflowLangchainTracer()]})
+
+    response = run("MLflow")
+    expected_response = TEST_CONTENT
+    assert response == expected_response
+
+    trace = mlflow.get_last_active_trace()
+    assert trace is not None
+    spans = trace.data.spans
+    assert spans[0].name == "parent"
+    assert spans[0].attributes[SpanAttributeKey.SPAN_TYPE] == "SPECIAL"
+    assert spans[0].attributes[SpanAttributeKey.INPUTS] == {"message": "MLflow"}
+    assert spans[0].attributes[SpanAttributeKey.OUTPUTS] == TEST_CONTENT
+    assert spans[0].status == SpanStatus(SpanStatusCode.OK)
+    assert spans[1].name == "RunnableSequence"
+    assert spans[1].attributes[SpanAttributeKey.SPAN_TYPE] == "CHAIN"
+    assert spans[1].attributes[SpanAttributeKey.INPUTS] == "MLflow"
+    assert spans[1].attributes[SpanAttributeKey.OUTPUTS] == TEST_CONTENT
+    assert spans[1].status == SpanStatus(SpanStatusCode.OK)
+    assert spans[1].parent_id == spans[0].span_id
